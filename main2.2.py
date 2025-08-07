@@ -28,13 +28,14 @@ from PyQt5.QtWidgets import (
     QGroupBox, QMessageBox, QComboBox
 )
 from PyQt5.QtCore import pyqtSignal
+from PyQt5.QtGui import QIcon
 
 MOTORS = [
     {'step': 17, 'dir': 27},
     {'step': 22, 'dir': 23},
     {'step': 24, 'dir': 25}
 ]
-STEPS_PER_REV = 200
+STEPS_PER_REV = 4
 
 class MotorThread(threading.Thread):
     def __init__(self, step_pin, dir_pin, speed_rpm, running_event, steps_moved, idx, status_callback, direction, start_position, gpio_handle):
@@ -70,8 +71,10 @@ class MotorThread(threading.Thread):
                     lgpio.gpio_write(self.gpio_handle, self.dir_pin, 1 if self.direction else 0)
             if self.steps_moved[self.idx] % 50 == 0:
                 self.status_callback(f"Motor {self.idx+1} moved: {self.start_position}")
+                print(f"Motor {self.idx+1} moved: {self.start_position}")
             elif self.steps_moved[self.idx] % 25 == 0:
                 self.status_callback(f"Motor {self.idx+1} moved: C")
+                print(f"Motor {self.idx+1} moved: C")
 
 class ReturnThread(threading.Thread):
     def __init__(self, step_pin, dir_pin, speed_rpm, steps_to_return, idx, status_callback, direction, start_position, gpio_handle):
@@ -108,11 +111,14 @@ class ReturnThread(threading.Thread):
 
             if s % 50 == 0:
                 self.status_callback(f"Motor {self.idx+1} moved: {self.start_position}")
+                print(f"Motor {self.idx+1} moved: {self.start_position}")
                 break
             elif s % 25 == 0:
                 self.status_callback(f"Motor {self.idx+1} moved: C")
+                print(f"Motor {self.idx+1} moved: C")
 
         self.status_callback(f"Motor {self.idx+1} returned to start position.")
+        print(f"Motor {self.idx+1} returned to start position.")
 
 class MotorControlApp(QMainWindow):
     finished = pyqtSignal()
@@ -183,6 +189,18 @@ class MotorControlApp(QMainWindow):
         self.start_btn.setStyleSheet("background-color:#37b24d; color:white; font-weight:bold;")
         self.start_btn.clicked.connect(self.start_motors)
         btn_hbox.addWidget(self.start_btn)
+        
+        self.stop_btn = QPushButton("🛑 Stop")
+        self.stop_btn.setStyleSheet("background-color:#fa5252; color:white; font-weight:bold;")
+        self.stop_btn.clicked.connect(self.stop_motors)
+        self.stop_btn.setEnabled(False)
+        btn_hbox.addWidget(self.stop_btn)
+        
+        self.close_btn = QPushButton("❌ Close")
+        self.close_btn.setStyleSheet("background-color:#868e96; color:white; font-weight:bold;")
+        self.close_btn.clicked.connect(self.close_application)
+        btn_hbox.addWidget(self.close_btn)
+        
         vbox.addLayout(btn_hbox)
         vbox.addStretch(1)
         self.config_tab.setLayout(vbox)
@@ -198,6 +216,7 @@ class MotorControlApp(QMainWindow):
         self.stop_btn.clicked.connect(self.stop_motors)
         self.stop_btn.setEnabled(False)
         vlayout.addWidget(self.stop_btn)
+        
         self.status_tab.setLayout(vlayout)
 
     def append_status(self, message):
@@ -313,6 +332,40 @@ class MotorControlApp(QMainWindow):
                 lgpio.gpiochip_close(self.gpio_handle)
             self.finished.emit()
         threading.Thread(target=finish_notice, daemon=True).start()
+
+    def close_application(self):
+        """Close the application with proper cleanup"""
+        # Stop any running motors first
+        if hasattr(self, 'running_events'):
+            for event in self.running_events:
+                event.clear()
+        
+        # Wait for threads to finish
+        if hasattr(self, 'threads'):
+            for thread in self.threads:
+                if thread and thread.is_alive():
+                    thread.join(timeout=1)
+        
+        if hasattr(self, 'return_threads'):
+            for thread in self.return_threads:
+                if thread and thread.is_alive():
+                    thread.join(timeout=1)
+        
+        # Cleanup GPIO if on Raspberry Pi
+        if ON_PI and self.gpio_handle:
+            try:
+                lgpio.gpio_close(self.gpio_handle)
+            except:
+                pass
+        
+        # Close the application
+        self.close()
+        QApplication.quit()
+
+    def closeEvent(self, event):
+        """Handle window close event"""
+        self.close_application()
+        event.accept()
 
 if __name__ == "__main__":
     # Try different Qt platforms for Raspberry Pi
