@@ -31,11 +31,11 @@ from PyQt5.QtCore import pyqtSignal
 from PyQt5.QtGui import QIcon
 
 MOTORS = [
-    {'step': 17, 'dir': 27},
-    {'step': 22, 'dir': 23},
-    {'step': 24, 'dir': 25}
+    {'step': 27, 'dir': 17},
+    {'step': 23, 'dir': 22},
+    {'step': 25, 'dir': 24}
 ]
-STEPS_PER_REV = 4
+STEPS_PER_REV = 400
 
 class MotorThread(threading.Thread):
     def __init__(self, step_pin, dir_pin, speed_rpm, running_event, steps_moved, idx, status_callback, direction, start_position, gpio_handle):
