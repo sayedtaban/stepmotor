@@ -708,6 +708,30 @@ class MotorControlApp(QMainWindow):
         for rt in self.return_threads:
             if rt and rt.is_alive():
                 rt.join(timeout=2)
+        
+        # Cleanup GPIO on Stop per requested behavior
+        if ON_PI and hasattr(self, 'gpio_handle') and self.gpio_handle is not None:
+            try:
+                self.append_status("🧹 Cleaning up GPIO pins (Stop)...")
+                for m in MOTORS:
+                    try:
+                        lgpio.gpio_free(self.gpio_handle, m['step'])
+                    except:
+                        pass
+                    try:
+                        lgpio.gpio_free(self.gpio_handle, m['dir'])
+                    except:
+                        pass
+                lgpio.gpiochip_close(self.gpio_handle)
+                self.gpio_handle = None
+                self.gpio_initialized = False
+                self.append_status("✅ GPIO freed and chip closed")
+            except Exception as e:
+                self.append_status(f"⚠️ GPIO cleanup warning on Stop: {e}")
+        
+        self.append_status("🛑 All motors stopped.")
+        self.start_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
 
     def close_application(self):
         """Close the application with proper cleanup"""
