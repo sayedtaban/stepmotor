@@ -2,6 +2,7 @@ import sys
 import threading
 import time
 import os
+import subprocess
 
 # Detect if running on Raspberry Pi
 try:
@@ -190,6 +191,73 @@ class MotorControlApp(QMainWindow):
                                  "Try closing other apps using GPIO or run with sudo.")
             self.reset_button_states()
             return False
+
+    def _test_gpio_handle(self) -> bool:
+        """Lightweight test to verify current GPIO handle works and lines are usable."""
+        if not ON_PI:
+            return True
+        if self.gpio_handle is None:
+            return False
+        try:
+            # Try a benign write LOW to each step/dir line
+            for m in MOTORS:
+                lgpio.gpio_write(self.gpio_handle, m['step'], 0)
+                lgpio.gpio_write(self.gpio_handle, m['dir'], 0)
+            return True
+        except Exception:
+            return False
+
+    def _reinit_gpio_with_retry(self, max_retries: int = 2, sleep_between: float = 0.2) -> bool:
+        """Force-close and reopen the GPIO chip and re-claim lines with retries."""
+        if not ON_PI:
+            return True
+        for attempt in range(1, max_retries + 1):
+            try:
+                self.append_status(f"♻️ Recovering GPIO (attempt {attempt}/{max_retries})...")
+                # Close previous handle if any
+                if self.gpio_handle is not None:
+                    try:
+                        lgpio.gpiochip_close(self.gpio_handle)
+                    except Exception:
+                        pass
+                    self.gpio_handle = None
+                    self.gpio_initialized = False
+
+                # Try to force release OS locks on gpiochip devices
+                self._force_release_gpio_locks()
+
+                # Backoff to allow kernel to release
+                time.sleep(max(sleep_between, 0.5))
+                # Re-open and claim
+                if not self.init_gpio_once():
+                    raise RuntimeError("Re-init failed")
+                # Quick post-check
+                if self._test_gpio_handle():
+                    self.append_status("✅ GPIO recovered and ready")
+                    return True
+            except Exception as e:
+                self.append_status(f"⚠️ GPIO recovery attempt failed: {e}")
+                time.sleep(max(sleep_between, 0.5))
+        self.append_status("❌ Unable to recover GPIO after retries")
+        return False
+
+    def _force_release_gpio_locks(self):
+        """Best-effort: kill processes holding /dev/gpiochip* using fuser. Requires privileges.
+        This will not kill our own process unless it still holds the device (we close first).
+        """
+        if not ON_PI:
+            return
+        cmds = [
+            ["/usr/sbin/fuser", "-k", "/dev/gpiochip0"],
+            ["/usr/sbin/fuser", "-k", "/dev/gpiochip1"],
+            ["/bin/fuser", "-k", "/dev/gpiochip0"],
+            ["/bin/fuser", "-k", "/dev/gpiochip1"],
+        ]
+        for cmd in cmds:
+            try:
+                subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+            except Exception:
+                continue
 
     def emit_motor_status_safe(self, message):
         """Thread-safe method to emit motor_status signal"""
@@ -466,6 +534,15 @@ class MotorControlApp(QMainWindow):
         if not self.is_running_sequence:
             self.append_status("⚠️ Sequence stopped or not running")
             return
+
+        # Preflight: ensure GPIO is usable; if busy/invalid, recover automatically
+        if ON_PI:
+            if not self._test_gpio_handle():
+                self.append_status("⚠️ GPIO not ready (possibly busy). Attempting recovery...")
+                if not self._reinit_gpio_with_retry():
+                    self.append_status("❌ GPIO recovery failed. Stopping sequence.")
+                    self.reset_button_states()
+                    return
             
         self.append_status(f"🔄 Running sequence {self.current_rep + 1}/{self.total_reps}")
         
