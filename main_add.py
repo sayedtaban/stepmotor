@@ -151,12 +151,45 @@ class MotorControlApp(QMainWindow):
         self.return_threads = []
         self.start_positions = ['A', 'A', 'A']  # default
         self.gpio_handle = None
+        self.gpio_initialized = False
         self.current_rep = 0
         self.total_reps = 1
         self.is_running_sequence = False
         
         # Ensure button states are properly initialized
         self.reset_button_states()
+
+    def init_gpio_once(self) -> bool:
+        """Initialize GPIO only once for the app session."""
+        if not ON_PI:
+            return True
+        if self.gpio_initialized and self.gpio_handle is not None:
+            return True
+        try:
+            self.append_status("🔧 Initializing GPIO (one-time)...")
+            self.gpio_handle = lgpio.gpiochip_open(0)
+            if self.gpio_handle < 0:
+                raise RuntimeError(f"Failed to open GPIO chip. Error code: {self.gpio_handle}")
+
+            # Claim all pins once
+            for i, m in enumerate(MOTORS):
+                result = lgpio.gpio_claim_output(self.gpio_handle, 0, m['step'], 0)
+                if result < 0:
+                    raise RuntimeError(f"Failed to claim step pin {m['step']} for motor {i+1}. Error: {result}")
+                result = lgpio.gpio_claim_output(self.gpio_handle, 0, m['dir'], 0)
+                if result < 0:
+                    raise RuntimeError(f"Failed to claim dir pin {m['dir']} for motor {i+1}. Error: {result}")
+            self.gpio_initialized = True
+            self.append_status("✅ GPIO initialized and pins claimed (will persist until app exit)")
+            return True
+        except Exception as e:
+            error_msg = str(e)
+            self.append_status(f"❌ GPIO Error: {error_msg}")
+            QMessageBox.critical(self, "GPIO Error", 
+                                 f"Failed to initialize GPIO: {error_msg}\n\n"
+                                 "Try closing other apps using GPIO or run with sudo.")
+            self.reset_button_states()
+            return False
 
     def emit_motor_status_safe(self, message):
         """Thread-safe method to emit motor_status signal"""
@@ -418,82 +451,10 @@ class MotorControlApp(QMainWindow):
         self.start_btn.setEnabled(False)
         self.stop_btn.setEnabled(True)
         
-        # Initialize GPIO if on Raspberry Pi
-        if ON_PI:
-            try:
-                # First, try to close any existing GPIO handle
-                if hasattr(self, 'gpio_handle') and self.gpio_handle is not None:
-                    try:
-                        lgpio.gpiochip_close(self.gpio_handle)
-                        self.append_status("🔄 Closed existing GPIO handle")
-                    except:
-                        pass
-                
-                # Initialize lgpio
-                self.append_status("🔧 Initializing GPIO...")
-                self.gpio_handle = lgpio.gpiochip_open(0)
-                if self.gpio_handle < 0:
-                    raise RuntimeError(f"Failed to open GPIO chip. Error code: {self.gpio_handle}")
-                
-                # Setup GPIO pins with better error handling
-                self.append_status("🔧 Configuring GPIO pins...")
-                for i, m in enumerate(MOTORS):
-                    try:
-                        # Try to free the pin first in case it's already in use
-                        try:
-                            lgpio.gpio_free(self.gpio_handle, m['step'])
-                        except:
-                            pass
-                        try:
-                            lgpio.gpio_free(self.gpio_handle, m['dir'])
-                        except:
-                            pass
-                        
-                        # Configure step pin as output
-                        result = lgpio.gpio_claim_output(self.gpio_handle, 0, m['step'], 0)
-                        if result < 0:
-                            raise RuntimeError(f"Failed to claim step pin {m['step']} for motor {i+1}. Error: {result}")
-                        
-                        # Configure dir pin as output
-                        result = lgpio.gpio_claim_output(self.gpio_handle, 0, m['dir'], 0)
-                        if result < 0:
-                            raise RuntimeError(f"Failed to claim dir pin {m['dir']} for motor {i+1}. Error: {result}")
-                        
-                        self.append_status(f"✅ Motor {i+1}: Step pin {m['step']}, Dir pin {m['dir']} configured")
-                        
-                    except Exception as pin_error:
-                        raise RuntimeError(f"Motor {i+1} pin configuration failed: {pin_error}")
-                
-                self.append_status("✅ All GPIO pins initialized successfully with lgpio")
-                
-            except Exception as e:
-                error_msg = str(e)
-                self.append_status(f"❌ GPIO Error: {error_msg}")
-                
-                # Provide specific help based on error type
-                if "busy" in error_msg.lower() or "in use" in error_msg.lower():
-                    self.append_status("💡 GPIO pins are busy. Try these solutions:")
-                    self.append_status("   1. Close any other applications using GPIO")
-                    self.append_status("   2. Restart the Raspberry Pi")
-                    self.append_status("   3. Run: sudo pkill -f python")
-                    self.append_status("   4. Run: sudo gpio unexportall")
-                elif "permission" in error_msg.lower():
-                    self.append_status("💡 Permission denied. Try running with sudo")
-                else:
-                    self.append_status("💡 Try running with sudo or check if GPIO pins are in use")
-                
-                QMessageBox.critical(self, "GPIO Error", 
-                                   f"Failed to initialize GPIO: {error_msg}\n\n"
-                                   "Common solutions:\n"
-                                   "• Close other GPIO applications\n"
-                                   "• Restart Raspberry Pi\n"
-                                   "• Run: sudo pkill -f python\n"
-                                   "• Run: sudo gpio unexportall\n"
-                                   "• Try running this application with sudo")
-                
-                self.reset_button_states()
-                return
-        else:
+        # Initialize GPIO only once
+        if not self.init_gpio_once():
+            return
+        if not ON_PI:
             # Not on Raspberry Pi - simulate mode
             self.append_status("🖥️ Running in simulation mode (not on Raspberry Pi)")
         
@@ -510,9 +471,12 @@ class MotorControlApp(QMainWindow):
         
         self.start_positions = [cb.currentText() for cb in self.pos_combos]
         self.steps_moved = [0, 0, 0]
+        # Reset thread references for a clean run
+        self.threads = [None, None, None]
+        self.return_threads = []
         speeds = [spin.value() for spin in self.speed_spins]
         delays = [spin.value() for spin in self.delay_spins]
-        angles = [spin.value() for spin in self.angle_spins]
+        angles = [spin.value()/2 for spin in self.angle_spins]
         
         # Clear any previous running events
         for evt in self.running_events:
@@ -658,32 +622,6 @@ class MotorControlApp(QMainWindow):
         for rt in self.return_threads:
             if rt and rt.is_alive():
                 rt.join(timeout=2)
-        
-        # Cleanup GPIO
-        if ON_PI and hasattr(self, 'gpio_handle') and self.gpio_handle is not None:
-            try:
-                self.append_status("🧹 Cleaning up GPIO pins...")
-                # Free all GPIO pins
-                for m in MOTORS:
-                    try:
-                        lgpio.gpio_free(self.gpio_handle, m['step'])
-                    except:
-                        pass
-                    try:
-                        lgpio.gpio_free(self.gpio_handle, m['dir'])
-                    except:
-                        pass
-                
-                # Close GPIO chip
-                lgpio.gpiochip_close(self.gpio_handle)
-                self.gpio_handle = None
-                self.append_status("✅ GPIO cleanup completed")
-            except Exception as e:
-                self.append_status(f"⚠️ GPIO cleanup warning: {e}")
-        
-        self.append_status("🛑 All motors stopped.")
-        self.start_btn.setEnabled(True)
-        self.stop_btn.setEnabled(False)
 
     def close_application(self):
         """Close the application with proper cleanup"""
@@ -721,6 +659,8 @@ class MotorControlApp(QMainWindow):
                 
                 # Close GPIO chip
                 lgpio.gpiochip_close(self.gpio_handle)
+                self.gpio_initialized = False
+                self.gpio_handle = None
             except:
                 pass
         
@@ -739,27 +679,12 @@ class MotorControlApp(QMainWindow):
             return "Not running on Raspberry Pi"
         
         try:
-            # Try to open GPIO chip
+            # Non-intrusive check: only try to open the chip (do not claim/free pins)
             test_handle = lgpio.gpiochip_open(0)
             if test_handle < 0:
                 return f"GPIO chip access failed. Error code: {test_handle}"
-            
-            # Check if pins are available
-            pin_status = []
-            for i, m in enumerate(MOTORS):
-                step_result = lgpio.gpio_claim_output(test_handle, 0, m['step'], 0)
-                dir_result = lgpio.gpio_claim_output(test_handle, 0, m['dir'], 0)
-                
-                if step_result >= 0 and dir_result >= 0:
-                    pin_status.append(f"Motor {i+1}: Pins {m['step']}, {m['dir']} - Available")
-                    # Free the pins immediately
-                    lgpio.gpio_free(test_handle, m['step'])
-                    lgpio.gpio_free(test_handle, m['dir'])
-                else:
-                    pin_status.append(f"Motor {i+1}: Pins {m['step']}, {m['dir']} - Busy (Step: {step_result}, Dir: {dir_result})")
-            
             lgpio.gpiochip_close(test_handle)
-            return "\n".join(pin_status)
+            return "GPIO chip accessible. Pins not probed to avoid interfering with operation."
             
         except Exception as e:
             return f"GPIO check failed: {e}"
