@@ -693,26 +693,28 @@ class MotorControlApp(QMainWindow):
 
     def stop_motors(self):
         """Stop all motors and reset sequence"""
-        self.append_status("🛑 Stop requested. Halting all motors...")
-        self.is_running_sequence = False
+       self.is_running_sequence = False
         
-        # Stop all running events
-        for evt in self.running_events:
-            evt.clear()
+        # Stop any running motors first
+        if hasattr(self, 'running_events'):
+            for event in self.running_events:
+                event.clear()
         
         # Wait for threads to finish
-        for t in self.threads:
-            if t and t.is_alive():
-                t.join(timeout=2)
+        if hasattr(self, 'threads'):
+            for thread in self.threads:
+                if thread and thread.is_alive():
+                    thread.join(timeout=1)
         
-        for rt in self.return_threads:
-            if rt and rt.is_alive():
-                rt.join(timeout=2)
+        if hasattr(self, 'return_threads'):
+            for thread in self.return_threads:
+                if thread and thread.is_alive():
+                    thread.join(timeout=1)
         
-        # Cleanup GPIO on Stop per requested behavior
+        # Cleanup GPIO if on Raspberry Pi
         if ON_PI and hasattr(self, 'gpio_handle') and self.gpio_handle is not None:
             try:
-                self.append_status("🧹 Cleaning up GPIO pins (Stop)...")
+                # Free all GPIO pins
                 for m in MOTORS:
                     try:
                         lgpio.gpio_free(self.gpio_handle, m['step'])
@@ -722,16 +724,13 @@ class MotorControlApp(QMainWindow):
                         lgpio.gpio_free(self.gpio_handle, m['dir'])
                     except:
                         pass
+                
+                # Close GPIO chip
                 lgpio.gpiochip_close(self.gpio_handle)
-                self.gpio_handle = None
                 self.gpio_initialized = False
-                self.append_status("✅ GPIO freed and chip closed")
-            except Exception as e:
-                self.append_status(f"⚠️ GPIO cleanup warning on Stop: {e}")
-        
-        self.append_status("🛑 All motors stopped.")
-        self.start_btn.setEnabled(True)
-        self.stop_btn.setEnabled(False)
+                self.gpio_handle = None
+            except:
+                pass
 
     def close_application(self):
         """Close the application with proper cleanup"""
