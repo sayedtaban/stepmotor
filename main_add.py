@@ -347,8 +347,12 @@ class MotorControlApp(QMainWindow):
 • Start Button Enabled: {start_enabled}
 • Stop Button Enabled: {stop_enabled}
 • Sequence Running: {running}
+• Current Repetition: {self.current_rep + 1}
+• Total Repetitions: {self.total_reps}
 • ON_PI: {ON_PI}
 • GPIO Handle: {hasattr(self, 'gpio_handle') and self.gpio_handle is not None}
+• Threads Active: {sum(1 for t in self.threads if t and t.is_alive())}
+• Return Threads Active: {sum(1 for rt in self.return_threads if rt and rt.is_alive())}
 """
         
         self.append_status(debug_info)
@@ -381,9 +385,7 @@ class MotorControlApp(QMainWindow):
     def show_finished(self):
         self.append_status("✅ All sequences completed!")
         QMessageBox.information(self, "Done", "All sequences completed successfully!")
-        self.start_btn.setEnabled(True)
-        self.stop_btn.setEnabled(False)
-        self.is_running_sequence = False
+        self.reset_button_states()  # Use reset_button_states instead of manual setting
 
     def on_sequence_complete(self):
         """Called when one sequence is complete"""
@@ -393,10 +395,12 @@ class MotorControlApp(QMainWindow):
             # Wait 2-5 seconds before next sequence
             wait_time = 2 if self.return_together_cb.isChecked() else 5
             self.append_status(f"⏳ Waiting {wait_time} seconds before next sequence...")
+            # Use QTimer to start next sequence
             QTimer.singleShot(wait_time * 1000, self.run_single_sequence)
         else:
             self.append_status("🎉 All sequences completed!")
-            self.emit_finished_safe()
+            # Use QTimer to emit finished signal from main thread
+            QTimer.singleShot(0, self.emit_finished_safe)
 
     def reset_button_states(self):
         """Reset button states to initial state"""
@@ -499,6 +503,7 @@ class MotorControlApp(QMainWindow):
     def run_single_sequence(self):
         """Run a single sequence of motor movements"""
         if not self.is_running_sequence:
+            self.append_status("⚠️ Sequence stopped or not running")
             return
             
         self.append_status(f"🔄 Running sequence {self.current_rep + 1}/{self.total_reps}")
@@ -551,6 +556,7 @@ class MotorControlApp(QMainWindow):
                     t.join()
             
             if not self.is_running_sequence:
+                self.append_status("⚠️ Sequence stopped during motor movement")
                 return
                 
             self.append_status("⏳ All motors reached target. Starting return sequence...")
@@ -590,8 +596,12 @@ class MotorControlApp(QMainWindow):
             for rt in self.return_threads:
                 if rt and rt.is_alive():
                     rt.join()
+            
             if self.is_running_sequence:
+                self.append_status(f"✅ Return sequence {self.current_rep + 1} complete")
                 self.emit_sequence_complete_safe()
+            else:
+                self.append_status("⚠️ Sequence stopped during return")
         
         threading.Thread(target=finish_return, daemon=True).start()
 
@@ -599,7 +609,11 @@ class MotorControlApp(QMainWindow):
         """Return motors to start position one by one"""
         def return_individual(idx=0):
             if idx >= len(MOTORS) or not self.is_running_sequence:
-                self.emit_sequence_complete_safe()
+                if self.is_running_sequence:
+                    self.append_status(f"✅ Return sequence {self.current_rep + 1} complete")
+                    self.emit_sequence_complete_safe()
+                else:
+                    self.append_status("⚠️ Sequence stopped during return")
                 return
                 
             if self.steps_moved[idx] > 0:
