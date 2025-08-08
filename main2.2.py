@@ -35,7 +35,7 @@ from PyQt5.QtGui import QIcon
 MOTORS = [
     {'step': 27, 'dir': 17},
     {'step': 23, 'dir': 22},
-    {'step': 25, 'dir': 24}
+    {'step': 24, 'dir': 25}
 ]
 STEPS_PER_REV = 400
 ANGLE_TO_MOVE = 45  # 45 degrees movement

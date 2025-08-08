@@ -30,7 +30,9 @@ from PyQt5.QtWidgets import (
     QGroupBox, QMessageBox, QComboBox, QCheckBox
 )
 from PyQt5.QtCore import pyqtSignal, Qt, QTimer, QMetaObject, Q_ARG
-from PyQt5.QtGui import QIcon
+from PyQt5.QtGui import QIcon, QTextCursor
+
+# Note: qRegisterMetaType is not available in PyQt5, we'll handle QTextCursor issues differently
 
 MOTORS = [
     {'step': 27, 'dir': 17},
@@ -76,11 +78,9 @@ class MotorThread(threading.Thread):
             
             if steps_moved_to_target % 25 == 0:
                 self.status_callback(f"Motor {self.idx+1}: Moving to target position... ({steps_moved_to_target}/{self.steps_to_target})")
-                print(f"Motor {self.idx+1}: Moving to target position... ({steps_moved_to_target}/{self.steps_to_target})")
         
         if steps_moved_to_target >= self.steps_to_target:
             self.status_callback(f"Motor {self.idx+1}: Reached target position! Waiting 3 seconds...")
-            print(f"Motor {self.idx+1}: Reached target position! Waiting 3 seconds...")
             time.sleep(3)  # Wait 3 seconds at target position
 
 class ReturnThread(threading.Thread):
@@ -100,7 +100,6 @@ class ReturnThread(threading.Thread):
     def run(self):
         if self.steps_to_return == 0:
             self.status_callback(f"Motor {self.idx+1}: Already at start position.")
-            print(f"Motor {self.idx+1}: Already at start position.")
             return
             
         step_delay = 60.0 / (STEPS_PER_REV * self.speed_rpm) / 2
@@ -108,7 +107,6 @@ class ReturnThread(threading.Thread):
             lgpio.gpio_write(self.gpio_handle, self.dir_pin, 1 if self.direction else 0)
         
         self.status_callback(f"Motor {self.idx+1}: Returning {self.steps_to_return} steps to {self.start_position} position...")
-        print(f"Motor {self.idx+1}: Returning {self.steps_to_return} steps to {self.start_position} position...")
         
         for step in range(self.steps_to_return):
             if ON_PI:
@@ -121,10 +119,8 @@ class ReturnThread(threading.Thread):
             
             if step % 25 == 0:
                 self.status_callback(f"Motor {self.idx+1}: Returning... ({step}/{self.steps_to_return})")
-                print(f"Motor {self.idx+1}: Returning... ({step}/{self.steps_to_return})")
 
         self.status_callback(f"Motor {self.idx+1}: Returned to start position.")
-        print(f"Motor {self.idx+1}: Returned to start position.")
 
 class MotorControlApp(QMainWindow):
     finished = pyqtSignal()
@@ -161,15 +157,45 @@ class MotorControlApp(QMainWindow):
 
     def emit_motor_status_safe(self, message):
         """Thread-safe method to emit motor_status signal"""
-        QTimer.singleShot(0, lambda: self.motor_status.emit(message))
+        try:
+            QTimer.singleShot(0, lambda: self._emit_motor_status_safe(message))
+        except Exception as e:
+            # Fallback: try direct emission
+            try:
+                self.motor_status.emit(message)
+            except:
+                pass  # Ignore errors to prevent crashes
+
+    def _emit_motor_status_safe(self, message):
+        """Internal method to safely emit motor_status signal"""
+        try:
+            self.motor_status.emit(message)
+        except Exception as e:
+            # If signal emission fails, try to append directly
+            try:
+                self.append_status(message)
+            except:
+                pass
 
     def emit_sequence_complete_safe(self):
         """Thread-safe method to emit sequence_complete signal"""
-        QTimer.singleShot(0, lambda: self.sequence_complete.emit())
+        try:
+            QTimer.singleShot(0, lambda: self.sequence_complete.emit())
+        except Exception as e:
+            try:
+                self.sequence_complete.emit()
+            except:
+                pass
 
     def emit_finished_safe(self):
         """Thread-safe method to emit finished signal"""
-        QTimer.singleShot(0, lambda: self.finished.emit())
+        try:
+            QTimer.singleShot(0, lambda: self.finished.emit())
+        except Exception as e:
+            try:
+                self.finished.emit()
+            except:
+                pass
 
     def _init_config_tab(self):
         vbox = QVBoxLayout()
@@ -285,8 +311,28 @@ class MotorControlApp(QMainWindow):
         self.status_tab.setLayout(vlayout)
 
     def append_status(self, message):
-        self.status_text.append(message)
-        self.tabs.setCurrentWidget(self.status_tab)
+        """Thread-safe method to append status messages"""
+        try:
+            # Use QTimer to ensure this runs on the main thread
+            QTimer.singleShot(0, lambda: self._append_status_safe(message))
+        except Exception as e:
+            # Fallback to direct append if timer fails
+            try:
+                self.status_text.append(message)
+            except:
+                pass  # Ignore any errors to prevent crashes
+
+    def _append_status_safe(self, message):
+        """Internal method to safely append status (called from main thread)"""
+        try:
+            self.status_text.append(message)
+        except Exception as e:
+            # If there's still an issue, try to clear and re-append
+            try:
+                self.status_text.clear()
+                self.status_text.append(message)
+            except:
+                pass  # Final fallback - ignore errors
 
     def show_finished(self):
         self.append_status("✅ All sequences completed!")
@@ -303,7 +349,7 @@ class MotorControlApp(QMainWindow):
             # Wait 2-5 seconds before next sequence
             wait_time = 2 if self.return_together_cb.isChecked() else 5
             self.append_status(f"⏳ Waiting {wait_time} seconds before next sequence...")
-            threading.Timer(wait_time, self.run_single_sequence).start()
+            QTimer.singleShot(wait_time * 1000, self.run_single_sequence)
         else:
             self.append_status("🎉 All sequences completed!")
             self.emit_finished_safe()
