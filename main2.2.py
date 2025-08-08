@@ -30,12 +30,13 @@ from PyQt5.QtWidgets import (
     QGroupBox, QMessageBox, QComboBox, QCheckBox
 )
 from PyQt5.QtCore import pyqtSignal, Qt
+from PyQt5.QtCore import QTimer
 from PyQt5.QtGui import QIcon
 
 MOTORS = [
     {'step': 27, 'dir': 17},
     {'step': 23, 'dir': 22},
-    {'step': 24, 'dir': 25}
+    {'step': 25, 'dir': 24}
 ]
 STEPS_PER_REV = 400
 ANGLE_TO_MOVE = 45  # 45 degrees movement
@@ -159,6 +160,14 @@ class MotorControlApp(QMainWindow):
         self.current_rep = 0
         self.total_reps = 1
         self.is_running_sequence = False
+
+    def emit_motor_status_safe(self, message: str):
+        """Emit motor_status on the GUI thread."""
+        QTimer.singleShot(0, lambda: self.motor_status.emit(message))
+
+    def emit_sequence_complete_safe(self):
+        """Emit sequence_complete on the GUI thread."""
+        QTimer.singleShot(0, lambda: self.sequence_complete.emit())
 
     def _init_config_tab(self):
         vbox = QVBoxLayout()
@@ -292,7 +301,7 @@ class MotorControlApp(QMainWindow):
             # Wait 2-5 seconds before next sequence
             wait_time = 2 if self.return_together_cb.isChecked() else 5
             self.append_status(f"⏳ Waiting {wait_time} seconds before next sequence...")
-            threading.Timer(wait_time, self.run_single_sequence).start()
+            QTimer.singleShot(int(wait_time * 1000), self.run_single_sequence)
         else:
             self.append_status("🎉 All sequences completed!")
             self.finished.emit()
@@ -354,7 +363,7 @@ class MotorControlApp(QMainWindow):
                 if not self.is_running_sequence:
                     return
                     
-                self.motor_status.emit(
+                self.emit_motor_status_safe(
                     f"Motor {idx+1}: started at speed {speeds[idx]} RPM after {delays[idx]:.1f}s delay. [Start: {self.start_positions[idx]}, Angle: {angles[idx]}°]"
                 )
                 
@@ -365,7 +374,7 @@ class MotorControlApp(QMainWindow):
                     running_event=self.running_events[idx],
                     steps_moved=self.steps_moved,
                     idx=idx,
-                    status_callback=self.motor_status.emit,
+                    status_callback=self.emit_motor_status_safe,
                     direction=True if self.start_positions[idx] == 'A' else False,
                     start_position=self.start_positions[idx],
                     gpio_handle=self.gpio_handle,
@@ -409,7 +418,7 @@ class MotorControlApp(QMainWindow):
                     speed_rpm=speeds[idx],
                     steps_to_return=self.steps_moved[idx],
                     idx=idx,
-                    status_callback=self.motor_status.emit,
+                    status_callback=self.emit_motor_status_safe,
                     direction=True if self.start_positions[idx] == 'A' else False,
                     start_position=self.start_positions[idx],
                     gpio_handle=self.gpio_handle,
@@ -424,7 +433,7 @@ class MotorControlApp(QMainWindow):
                 if rt and rt.is_alive():
                     rt.join()
             if self.is_running_sequence:
-                self.sequence_complete.emit()
+                self.emit_sequence_complete_safe()
         
         threading.Thread(target=finish_return, daemon=True).start()
 
@@ -432,7 +441,7 @@ class MotorControlApp(QMainWindow):
         """Return motors to start position one by one"""
         def return_individual(idx=0):
             if idx >= len(MOTORS) or not self.is_running_sequence:
-                self.sequence_complete.emit()
+                self.emit_sequence_complete_safe()
                 return
                 
             if self.steps_moved[idx] > 0:
@@ -442,7 +451,7 @@ class MotorControlApp(QMainWindow):
                     speed_rpm=speeds[idx],
                     steps_to_return=self.steps_moved[idx],
                     idx=idx,
-                    status_callback=self.motor_status.emit,
+                    status_callback=self.emit_motor_status_safe,
                     direction=True if self.start_positions[idx] == 'A' else False,
                     start_position=self.start_positions[idx],
                     gpio_handle=self.gpio_handle,
