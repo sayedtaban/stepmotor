@@ -12,9 +12,11 @@ except ImportError:
 
 # Set Qt environment variables for Raspberry Pi
 if ON_PI:
-    os.environ['QT_QPA_PLATFORM'] = 'eglfs'  # Use EGLFS for Raspberry Pi
-    os.environ['QT_QPA_EGLFS_PHYSICAL_WIDTH'] = '800'
-    os.environ['QT_QPA_EGLFS_PHYSICAL_HEIGHT'] = '600'
+    # Use xcb for windowed mode instead of eglfs for fullscreen
+    os.environ['QT_QPA_PLATFORM'] = 'xcb'
+    # Remove fullscreen environment variables
+    # os.environ['QT_QPA_EGLFS_PHYSICAL_WIDTH'] = '800'
+    # os.environ['QT_QPA_EGLFS_PHYSICAL_HEIGHT'] = '600'
     # Fallback to offscreen if eglfs fails
     try:
         os.environ['DISPLAY'] = ':0'
@@ -27,7 +29,7 @@ from PyQt5.QtWidgets import (
     QLabel, QSpinBox, QDoubleSpinBox, QPushButton, QTextEdit,
     QGroupBox, QMessageBox, QComboBox, QCheckBox
 )
-from PyQt5.QtCore import pyqtSignal
+from PyQt5.QtCore import pyqtSignal, Qt
 from PyQt5.QtGui import QIcon
 
 MOTORS = [
@@ -213,7 +215,7 @@ class MotorControlApp(QMainWindow):
             
         group.setLayout(form)
         vbox.addWidget(group)
-        
+
         # Sequence Configuration Group
         seq_group = QGroupBox("Sequence Configuration")
         seq_layout = QHBoxLayout()
@@ -323,7 +325,7 @@ class MotorControlApp(QMainWindow):
                 self.start_btn.setEnabled(True)
                 self.stop_btn.setEnabled(False)
                 return
-        
+
         # Start the first sequence
         self.run_single_sequence()
 
@@ -343,7 +345,7 @@ class MotorControlApp(QMainWindow):
         # Clear any previous running events
         for evt in self.running_events:
             evt.clear()
-        
+
         # Start motors with delays
         for idx, m in enumerate(MOTORS):
             self.running_events[idx].set()
@@ -373,7 +375,7 @@ class MotorControlApp(QMainWindow):
                 thread.start()
                 
             threading.Thread(target=run_motor).start()
-        
+
         # Wait for all motors to reach target and complete 3-second wait
         def wait_and_return():
             # Wait for all motors to complete their movement
@@ -415,7 +417,7 @@ class MotorControlApp(QMainWindow):
                 )
                 self.return_threads.append(rt)
                 rt.start()
-        
+
         # Wait for all return threads to complete
         def finish_return():
             for rt in self.return_threads:
@@ -526,7 +528,8 @@ class MotorControlApp(QMainWindow):
 if __name__ == "__main__":
     # Try different Qt platforms for Raspberry Pi
     if ON_PI:
-        platforms_to_try = ['eglfs', 'offscreen', 'linuxfb']
+        # Use windowed mode platforms instead of fullscreen
+        platforms_to_try = ['xcb', 'x11', 'offscreen']
         for platform in platforms_to_try:
             try:
                 os.environ['QT_QPA_PLATFORM'] = platform
@@ -544,6 +547,8 @@ if __name__ == "__main__":
     try:
         window = MotorControlApp()
         window.resize(600, 380)
+        # Ensure window is not fullscreen
+        window.setWindowState(window.windowState() & ~Qt.WindowFullScreen)
         window.show()
         sys.exit(app.exec_())
     except Exception as e:
@@ -551,5 +556,5 @@ if __name__ == "__main__":
         if ON_PI:
             print("If running on Raspberry Pi, try:")
             print("1. Install: sudo apt-get install qt5-default")
-            print("2. Or run with: export QT_QPA_PLATFORM=offscreen")
+            print("2. Or run with: export QT_QPA_PLATFORM=xcb")
         sys.exit(1)
