@@ -647,11 +647,20 @@ class MotorControlApp(QMainWindow):
                 if rt and rt.is_alive():
                     rt.join()
             
-            if self.is_running_sequence:
-                self.append_status(f"✅ Return sequence {self.current_rep + 1} complete")
-                self.emit_sequence_complete_safe()
-            else:
+            if not self.is_running_sequence:
                 self.append_status("⚠️ Sequence stopped during return")
+                return
+             
+            self.append_status(f"✅ Return sequence {self.current_rep + 1} complete")
+            # Advance repetition counter and schedule next or finish
+            self.current_rep += 1
+            if self.current_rep < self.total_reps:
+                wait_time = 2 if self.return_together_cb.isChecked() else 5
+                self.append_status(f"⏳ Waiting {wait_time} seconds before next sequence...")
+                QTimer.singleShot(wait_time * 1000, self.run_single_sequence)
+            else:
+                self.append_status("🎉 All sequences completed!")
+                QTimer.singleShot(0, self.emit_finished_safe)
         
         threading.Thread(target=finish_return, daemon=True).start()
 
@@ -659,13 +668,22 @@ class MotorControlApp(QMainWindow):
         """Return motors to start position one by one"""
         def return_individual(idx=0):
             if idx >= len(MOTORS) or not self.is_running_sequence:
-                if self.is_running_sequence:
-                    self.append_status(f"✅ Return sequence {self.current_rep + 1} complete")
-                    self.emit_sequence_complete_safe()
-                else:
+                if not self.is_running_sequence:
                     self.append_status("⚠️ Sequence stopped during return")
+                    return
+                 
+                self.append_status(f"✅ Return sequence {self.current_rep + 1} complete")
+                # Advance repetition counter and schedule next or finish
+                self.current_rep += 1
+                if self.current_rep < self.total_reps:
+                    wait_time = 2 if self.return_together_cb.isChecked() else 5
+                    self.append_status(f"⏳ Waiting {wait_time} seconds before next sequence...")
+                    QTimer.singleShot(wait_time * 1000, self.run_single_sequence)
+                else:
+                    self.append_status("🎉 All sequences completed!")
+                    QTimer.singleShot(0, self.emit_finished_safe)
                 return
-                
+             
             if self.steps_moved[idx] > 0:
                 rt = ReturnThread(
                     step_pin=MOTORS[idx]['step'],
@@ -693,28 +711,15 @@ class MotorControlApp(QMainWindow):
 
     def stop_motors(self):
         """Stop all motors and reset sequence"""
-       self.is_running_sequence = False
+        self.append_status("🛑 Stop requested. Halting all motors...")
+        self.is_running_sequence = False
         
-        # Stop any running motors first
-        if hasattr(self, 'running_events'):
-            for event in self.running_events:
-                event.clear()
         
-        # Wait for threads to finish
-        if hasattr(self, 'threads'):
-            for thread in self.threads:
-                if thread and thread.is_alive():
-                    thread.join(timeout=1)
         
-        if hasattr(self, 'return_threads'):
-            for thread in self.return_threads:
-                if thread and thread.is_alive():
-                    thread.join(timeout=1)
-        
-        # Cleanup GPIO if on Raspberry Pi
+        # Cleanup GPIO on Stop per requested behavior
         if ON_PI and hasattr(self, 'gpio_handle') and self.gpio_handle is not None:
             try:
-                # Free all GPIO pins
+                self.append_status("🧹 Cleaning up GPIO pins (Stop)...")
                 for m in MOTORS:
                     try:
                         lgpio.gpio_free(self.gpio_handle, m['step'])
@@ -724,13 +729,16 @@ class MotorControlApp(QMainWindow):
                         lgpio.gpio_free(self.gpio_handle, m['dir'])
                     except:
                         pass
-                
-                # Close GPIO chip
                 lgpio.gpiochip_close(self.gpio_handle)
-                self.gpio_initialized = False
                 self.gpio_handle = None
-            except:
-                pass
+                self.gpio_initialized = False
+                self.append_status("✅ GPIO freed and chip closed")
+            except Exception as e:
+                self.append_status(f"⚠️ GPIO cleanup warning on Stop: {e}")
+        
+        self.append_status("🛑 All motors stopped.")
+        self.start_btn.setEnabled(True)
+        self.stop_btn.setEnabled(False)
 
     def close_application(self):
         """Close the application with proper cleanup"""
