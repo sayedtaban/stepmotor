@@ -36,7 +36,6 @@ MOTORS = [
     {'step': 25, 'dir': 24}
 ]
 STEPS_PER_REV = 400
-ANGLE_TO_MOVE = 45  # 45 degrees movement
 
 class MotorThread(threading.Thread):
     def __init__(self, step_pin, dir_pin, speed_rpm, running_event, steps_moved, idx, status_callback, direction, start_position, gpio_handle, target_angle=45):
@@ -308,18 +307,25 @@ class MotorControlApp(QMainWindow):
         # Initialize GPIO if on Raspberry Pi
         if ON_PI:
             try:
+                # Initialize lgpio
                 self.gpio_handle = lgpio.gpiochip_open(0)
                 if self.gpio_handle < 0:
                     raise RuntimeError("Failed to open GPIO chip")
                 
+                # Setup GPIO pins
                 for m in MOTORS:
+                    # Configure step pin as output
                     lgpio.gpio_claim_output(self.gpio_handle, 0, m['step'], 0)
+                    # Configure dir pin as output
                     lgpio.gpio_claim_output(self.gpio_handle, 0, m['dir'], 0)
                 
-                self.append_status("✅ GPIO pins initialized successfully")
+                self.append_status("✅ GPIO pins initialized successfully with lgpio")
             except Exception as e:
                 self.append_status(f"❌ GPIO Error: {e}")
-                QMessageBox.critical(self, "GPIO Error", f"Failed to initialize GPIO: {e}")
+                self.append_status("💡 Try running with sudo or check if GPIO pins are in use")
+                QMessageBox.critical(self, "GPIO Error", 
+                                   f"Failed to initialize GPIO: {e}\n\n"
+                                   "Try running with sudo or check if GPIO pins are already in use.")
                 self.start_btn.setEnabled(True)
                 self.stop_btn.setEnabled(False)
                 return
@@ -552,4 +558,4 @@ if __name__ == "__main__":
             print("If running on Raspberry Pi, try:")
             print("1. Install: sudo apt-get install qt5-default")
             print("2. Or run with: export QT_QPA_PLATFORM=offscreen")
-        sys.exit(1)
+        sys.exit(1) 
