@@ -469,11 +469,13 @@ class MotorControlApp(QMainWindow):
             
         self.append_status(f"🔄 Running sequence {self.current_rep + 1}/{self.total_reps}")
         
+        # Capture UI config for this run
         self.start_positions = [cb.currentText() for cb in self.pos_combos]
         self.steps_moved = [0, 0, 0]
-        # Reset thread references for a clean run
+        # Reset thread references and events for a clean run
         self.threads = [None, None, None]
         self.return_threads = []
+        self.running_events = [threading.Event() for _ in range(3)]
         speeds = [spin.value() for spin in self.speed_spins]
         delays = [spin.value() for spin in self.delay_spins]
         angles = [spin.value()/2 for spin in self.angle_spins]
@@ -510,28 +512,35 @@ class MotorControlApp(QMainWindow):
                 self.threads[idx] = thread
                 thread.start()
                 
-            threading.Thread(target=run_motor).start()
+            threading.Thread(target=run_motor, daemon=True).start()
         
         # Wait for all motors to reach target and complete 3-second wait
         def wait_and_return():
-            # Wait for all motors to complete their movement
+            # Wait for all MotorThread objects to be created (avoid race with delayed start)
+            max_wait_for_start_sec = 5.0
+            waited = 0.0
+            while any(t is None for t in self.threads) and waited < max_wait_for_start_sec and self.is_running_sequence:
+                time.sleep(0.05)
+                waited += 0.05
+
+            # Join all motor threads that exist
             for t in self.threads:
-                if t and t.is_alive():
+                if t is not None:
                     t.join()
-            
+             
             if not self.is_running_sequence:
                 self.append_status("⚠️ Sequence stopped during motor movement")
                 return
-                
+                 
             self.append_status("⏳ All motors reached target. Starting return sequence...")
-            
+             
             if self.return_together_cb.isChecked():
                 # Return all motors together
                 self.return_all_motors_together(speeds)
             else:
                 # Return motors individually
                 self.return_motors_individually(speeds)
-        
+         
         threading.Thread(target=wait_and_return, daemon=True).start()
 
     def return_all_motors_together(self, speeds):
