@@ -23,7 +23,7 @@ if ON_PI:
 MOTORS = [
     {'step': 27, 'dir': 17, 'start_pos': 'A'},
     {'step': 23, 'dir': 22, 'start_pos': 'B'},
-    {'step': 25, 'dir': 24, 'start_pos': 'B'}
+    {'step': 24, 'dir': 25, 'start_pos': 'B'}
 ]
 STEPS_PER_REV = 200  # Adjust for your hardware if needed
 
@@ -97,7 +97,10 @@ class MotorThread(threading.Thread):
         repetitions_completed = 0
         while self.running_event.is_set() and repetitions_completed < self.repetitions:
             # Perform one move to final position (discrete rotation)
-            for _ in range(steps_to_move):
+            if ON_PI:
+                lgpio.gpio_write(GPIO_HANDLE, self.dir_pin, 1 if self.direction else 0)
+            self.status_callback(f"Motor {self.idx + 1}: direction changed 1")
+            for id in range(steps_to_move):
                 if not self.running_event.is_set():
                     break
                 if ON_PI:
@@ -107,7 +110,12 @@ class MotorThread(threading.Thread):
                     time.sleep(step_delay)
                 else:
                     time.sleep(step_delay * 2)
+                if id == int(steps_to_move / 2):
+                    if ON_PI:
+                        lgpio.gpio_write(GPIO_HANDLE, self.dir_pin, 0 if self.direction else 1)
+                    self.status_callback(f"Motor {self.idx + 1}: direction changed 0")
                 self.steps_moved[self.idx] += 1
+                
             repetitions_completed += 1
             self.status_callback(
                 f"Motor {self.idx+1}: completed {repetitions_completed}/{self.repetitions} rotation(s) of {self.angle_degrees}°."
