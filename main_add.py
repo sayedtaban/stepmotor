@@ -25,7 +25,7 @@ MOTORS = [
     {'step': 23, 'dir': 22, 'start_pos': 'B'},
     {'step': 24, 'dir': 25, 'start_pos': 'B'}
 ]
-STEPS_PER_REV = 200  # Adjust for your hardware if needed
+STEPS_PER_REV = 400  # Adjust for your hardware if needed
 
 GPIO_HANDLE = None
 
