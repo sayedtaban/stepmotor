@@ -91,7 +91,7 @@ class MotorThread(threading.Thread):
         steps_to_move = max(1, int(STEPS_PER_REV * (self.angle_degrees / 360.0)))
 
         # Set direction once for all repetitions
-        if ON_PI:
+        if ON_PI and GPIO_HANDLE is not None:
             lgpio.gpio_write(GPIO_HANDLE, self.dir_pin, 1 if self.direction else 0)
 
         repetitions_completed = 0
@@ -243,8 +243,6 @@ class MotorControlApp(QMainWindow):
         for t in self.threads:
             if t is not None:
                 t.join()
-        if ON_PI:
-            cleanup_gpio()
         self.finished.emit()
 
     def start_motors(self):
