@@ -97,7 +97,7 @@ class MotorThread(threading.Thread):
         repetitions_completed = 0
         while self.running_event.is_set() and repetitions_completed < self.repetitions:
             # Perform one move to final position (discrete rotation)
-            if ON_PI:
+            if ON_PI and GPIO_HANDLE is not None:
                 lgpio.gpio_write(GPIO_HANDLE, self.dir_pin, 1 if self.direction else 0)
             self.status_callback(f"Motor {self.idx + 1}: direction changed 1")
             for id in range(steps_to_move):
@@ -246,6 +246,7 @@ class MotorControlApp(QMainWindow):
         self.finished.emit()
 
     def start_motors(self):
+        init_gpio_pins()
         self.append_status("🚦 Starting motors...")
         self.steps_moved = [0, 0, 0]
         speeds = [spin.value() for spin in self.speed_spins]
